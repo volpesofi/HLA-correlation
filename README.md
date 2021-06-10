@@ -7,9 +7,9 @@ The allele count can be:
   * 0 (hla_i not present)
 
 From the metadata (`input/metadata_Vo.xlsx`), we subset the rows with information for WGS samples 
-and we add to the count matrix as many columns as the metadata information with the fenotypes we wish to assess the correlation for.
+and we add to the count matrix as many columns as the metadata information with the phenotypes we wish to assess the correlation for.
 
-The correlation between fenotype and genotype is then performed with two R functions:
+The correlation between phenotype and genotype is then performed with two R functions:
   * `lm(var ~ hla)` - to correlate the genotype (hla) with continuos variables (var), _i.e._ "Abbot_semiquantitative", "Roche_Total_ICO", "Diasorin_IgG_semiquantitative" and the residuals.
   * `glm(var ~ hla , family = "binomial")` – to correlate the genotype (hla) with discrete variable (var), _i.e._ "Groundtruth_GTA", "Groundtruth_direct_contacts_GTB", "Groundtruth_indirect_contacts_GTC", "swabs"
 
