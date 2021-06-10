@@ -1,0 +1,6 @@
+# ignore results folder
+tables_*/
+plots_*/
+# ignore Rdata
+*.RData
+*.Rapp.history
