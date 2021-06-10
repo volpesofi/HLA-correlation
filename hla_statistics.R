@@ -756,7 +756,7 @@ RES_HLA = results_all(M_hla.complete = M_hla.b.complete, allele = "B", countFilt
 hlab_all = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = T)]
 RESULTS_B_all = Reduce(function(x, y) merge(x, y, by = "hla"), hlab_all)
 RESULTS_B_all_f = RESULTS_B_all[, grep(pattern = "Std.Error", colnames(RESULTS_B_all), invert = T)]
-write.table(x = RESULTS_B_all_f, file = "tables/results_hla_b_allmodels.tsv", 
+write.table(x = RESULTS_B_all_f, file = paste(tabl,"results_hla_b_allmodels.tsv", sep=''), 
             sep = "\t", quote = F, row.names = F)
 # results dataframe filtered HLA-B
 hlab_expr = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = F)]
@@ -956,7 +956,7 @@ RES_HLA = results_all(M_hla.complete = M_hla.c.complete, allele = "C", countFilt
 hlac_all = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = T)]
 RESULTS_C_all = Reduce(function(x, y) merge(x, y, by = "hla"), hlac_all)
 RESULTS_C_all_f = RESULTS_C_all[, grep(pattern = "Std.Error", colnames(RESULTS_C_all), invert = T)]
-write.table(x = RESULTS_C_all_f, file = "tables/results_hla_c_allmodels.tsv", 
+write.table(x = RESULTS_C_all_f, file = paste(tabl,"results_hla_c_allmodels.tsv", sep=''),
             sep = "\t", quote = F, row.names = F)
 # results dataframe filtered HLA-C
 hlac_expr = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = F)]
@@ -1273,3 +1273,6 @@ hlaTests(M_hla.c.complete, var = "Groundtruth_GTA")
 
 # -------- save image ----------
 save.image(file = "hla.RData")
+
+sessionInfo()
+
