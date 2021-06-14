@@ -6,18 +6,27 @@ suppressMessages(library(openxlsx))
 suppressMessages(library(stringr))
 suppressMessages(library("gplots"))
 suppressMessages(library(tidyr))
+suppressMessages(library(viridis))
 
 # ----- set WorkingDirectory and create outputs folders ---------
 setwd('/beegfs/scratch/ric.cosr/ric.cosr/Vo_WGS/hla_statistics/')
 
+# ------ input file ------
+#file_hla_typing = 'input/fished_all_tops.tsv'
+#file_hla_typing = 'input/optitype_results_classI.tsv'
+file_hla_typing = 'input/hlavbseq_results.tsv'
+
 # --- create dir for outputs ----
-tabl = "tables_fished_tops/" 
-plt = "plots_fished_tops/"
+#tool_typing = "optitype"
+tool_typing = "hlavbseq"
+#tool_typing = "bwakit"
+tabl = paste("tables_", tool_typing, "/",  sep ='') 
+plt = paste("plots_", tool_typing, "/",sep ='') 
+
 dir.create(tabl, recursive = T, showWarnings = F)
 dir.create(plt, recursive = T, showWarnings = F)
 
 # -----  read HLA output from file  ---------
-file_hla_typing = 'input/fished_all_tops.tsv'
 HLA_t = read.table(file = file_hla_typing , header = T, sep = '\t', check.names = F)
 HLA_t$Barcode= as.character(HLA_t$Barcode)
 WGSsamples = HLA_t$Barcode
@@ -88,16 +97,30 @@ twodigit <- function(file, sep = "\t", rownames = "Barcode") {
 #' @param file file with the hla assessment to read
 #' @param allele  one of the class I allele = c("A", "B", "C")
 #' @param rownames define which variable to use as rownames, c("Sample_name_WGS", "Barcode")
+#' @param tool tool used for haplotyping c("optitype", "other")
 #' @return Matrix subset for one of the allele to use for further analysis
 #' @examples
-#' M_HLA = Create.HLAMatrix(file = "input/all_fished_tops_pre.tsv", allele = "A",
+#' M_HLA = Create.HLAMatrix(file = "input/fished_all_tops.tsv", allele = "A",
 #'                        sep = '\t', rownames = "Sample_name_WGS")
 #' @export
-Create.HLAMatrix <- function(file, allele, sep = '\t',rownames = "Barcode") {
+Create.HLAMatrix <- function(file, allele, sep = '\t',rownames = "Barcode", tool) {
   HLA_t = read.table(file = file , header = T, sep = sep, check.names = F)
   HLA_t$Barcode = as.character(HLA_t$Barcode)
   HLA_allele= HLA_t[,grep(x = colnames(HLA_t),pattern = "HLA")]
-  fx <- function(x) str_sub(string = x, start = 1, end = 11)
+  
+  fx <- function(x) {
+    a = strsplit(x, '\\*')
+    for (i in 1:length(a)) { 
+      a[[i]][2] = str_sub(string = a[[i]][2], start = 1, end = 5)
+      if (a[[i]][1] == "n/a") {
+        a[[i]] = a[[i]][1]
+      } else {
+        a[[i]] = paste(a[[i]], collapse = "*")
+      }
+      }
+    return(unlist(a))
+    ### str_sub(string = x, start = 1, end = 11)
+    }
   HLA_twodigit = as.data.frame(sapply(HLA_allele, fx))
   row.names(HLA_twodigit) <- HLA_t[,rownames]
   colnames(HLA_twodigit) <- str_replace_all(string = colnames(HLA_twodigit), 
@@ -118,6 +141,9 @@ Create.HLAMatrix <- function(file, allele, sep = '\t',rownames = "Barcode") {
     hla.2 = HLA_twodigit[s,index[2]]
     M[s,hla.1] = M[s,hla.1]+1
     M[s,hla.2] = M[s,hla.2]+1
+  }
+  if (tool == "optitype") {
+    colnames(M) <- paste("HLA",colnames(M), sep ="-")
   }
   return(M)
 }
@@ -327,7 +353,7 @@ hla_lm = function(M, var = "Abbot_semiquantitative",
 #' @return List of data frames with results of glm and lm for each var of interest
 #' @examples 
 #' results_all(M_hla.a.complete, allele = "A", countFilter = 10)
-# M_hla.complete = M_hla.a.complete; allele = "A"; countFilter = 10
+#M_hla.complete = M_hla.a.complete; allele = "A"; countFilter = 10
 results_all = function(M_hla.complete, 
                        allele = c("A", "B", "C"), 
                        countFilter = 10){
@@ -513,12 +539,13 @@ results_all = function(M_hla.complete,
   return(res)
 }
 
-# ----- ** Analysis starts here **** ---------
+# -------- ** Analysis starts here ** --------
 
-# --- HLA-A ----- 
+# -------- ***** Class I ***** --------
+# -------- HLA-A -------- 
 # create HLA matrix from HLA typing 
 M_hla.a = Create.HLAMatrix(file = file_hla_typing, allele = "A", 
-                           rownames = "Barcode")
+                           rownames = "Barcode", tool = tool_typing)
 # Add metadata
 M_hla.a.complete = addMetadata(M_hla.a, metadata = metadata_Vo_HLA, clean_output = TRUE)
 # save the results (ignore 6 warning, columns are then renamed in the function)
@@ -537,7 +564,7 @@ RESULTS_A_expr = Reduce(function(x, y) merge(x, y, by = "hla"), hlaa_expr)
 RESULTS_A_expr = RESULTS_A_expr[,grep(pattern = "res", x = colnames(RESULTS_A_expr), invert = TRUE)]
 # filter HLA with 2 variable with pvalue lowere than .1
 atleast_1sign = rowSums(RESULTS_A_expr[,grep(c("pvalue"), 
-                                             x = colnames(RESULTS_A_expr))] < 0.1) > 1
+                                             x = colnames(RESULTS_A_expr))] < 0.05) > 1
 signTable_A = RESULTS_A_expr[atleast_1sign,]
 Est = signTable_A[,grep(c("Estimate"), x = colnames(signTable_A))]
 # protection
@@ -550,6 +577,7 @@ susceptibility_A; protection_A
 
 # ---- HLA-A plots --------
 # ---- heatmap with pheatmap -----
+allele = "A"
 data = RES_HLA$continue_expr[,c("Abbott_pvalue", "Roche_pvalue", "Diasorin_pvalue")]
 data = -log10(data)
 row.names(data) = RES_HLA$continue_expr$hla
@@ -574,7 +602,7 @@ pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
          annotation_legend = FALSE, legend = TRUE,
          breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
          cluster_rows = T, cluster_cols = T, treeheight_row = 0,
-         treeheight_col = 15, filename = paste(plt,"HLAA_antibody_pvalue_heatmap.png", sep =''))
+         treeheight_col = 15, filename = paste(plt,"HLA", allele, "_antibody_pvalue_heatmap.png", sep =''))
 
 
 data = RES_HLA$binomial_expr[,c("swab_pvalue", "GTA_pvalue", "GTB_pvalue", "GTC_pvalue")]
@@ -598,7 +626,7 @@ pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
          breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
          cluster_rows = T, cluster_cols = T, treeheight_row = 0,
          treeheight_col = 15, 
-         filename = paste(plt,"/HLAA_binomial_pvalue_heatmap.png", sep =''))
+         filename = paste(plt,"/HLA", allele,"_binomial_pvalue_heatmap.png", sep =''))
 
 
 data = RES_HLA$residuals_expr[,c("resAbbott_pvalue", "resRoche_pvalue", "resDiasorin_pvalue",
@@ -628,7 +656,7 @@ pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
          annotation_legend = FALSE, legend = TRUE,
          breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
          cluster_rows = T, cluster_cols = T, treeheight_row = 0,
-         treeheight_col = 15, filename = paste(plt,"/HLAA_residuals_pvalue_heatmap.png", sep =''))
+         treeheight_col = 15, filename = paste(plt,"/HLA", allele,"_residuals_pvalue_heatmap.png", sep =''))
 dev.off()
 
 # ---- boxplot with ggplot2 -----
@@ -743,10 +771,10 @@ dev.off()
 
 
 
-# --- HLA-B ----- 
+# -------- HLA-B --------
 # create hla matrix for HLA-B
 M_hla.b = Create.HLAMatrix(file = file_hla_typing, allele = "B", 
-                           rownames = "Barcode")
+                           rownames = "Barcode", tool = tool_typing)
 # Add metadata
 M_hla.b.complete = addMetadata(M_hla.b, metadata = metadata_Vo_HLA, clean_output = TRUE)
 # save the results (ignore 6 warning, columns are then renamed in the function)
@@ -826,7 +854,7 @@ pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
          cluster_rows = T, cluster_cols = T, treeheight_row = 0,
          treeheight_col = 15, 
          filename = paste(plt,"/HLAB_binomial_pvalue_heatmap.png", sep =''))
-
+dev.off()
 # --- boxplot ggplot2 --------
 d = M_hla.b.complete[,c("HLA-B*51:01", "Abbot_semiquantitative", 
                         "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
@@ -944,10 +972,10 @@ mosaicplot(Groundtruth_GTA ~ `HLA-B*18:01`, data = d,
            main = "HLA-B*18:01", shade = TRUE, xlab = "GTA")
 dev.off()
 
-# --- HLA-C ----- 
+# -------- HLA-C -------- 
 # create Matrix 
 M_hla.c = Create.HLAMatrix(file = file_hla_typing, allele = "C", 
-                           rownames = "Barcode")
+                           rownames = "Barcode", tool = tool_typing)
 # add metadat
 M_hla.c.complete = addMetadata(M_hla.c, metadata = metadata_Vo_HLA, clean_output = TRUE)
 # save the results (ignore 6 warning, columns are then renamed in the function)
@@ -1060,6 +1088,466 @@ pdf(paste(plt,"/mosaicplot_GTA_HLA.C.05.01.pdf", sep =''), width = 6, height = 6
 mosaicplot(Groundtruth_GTA ~ `HLA-C*05:01`, data = d, 
            main = "HLA-C*05:01", shade = TRUE, xlab = "GTA")
 dev.off()
+
+
+# -------- ***** Class II ******* --------
+# -------- HLA-DQA1 --------
+M_hla.dqa1 = Create.HLAMatrix(file = file_hla_typing, allele = "DQA1", 
+                              rownames = "Barcode", tool = tool_typing)
+# Add metadata
+M_hla.dqa1.complete = addMetadata(M_hla.dqa1, metadata = metadata_Vo_HLA, clean_output = TRUE)
+# save the results (ignore 6 warning, columns are then renamed in the function)
+RES_HLA = results_all(M_hla.complete = M_hla.dqa1.complete, allele = "DQA1", countFilter = 10)
+
+# save all the result lists for all HLA-A in a dataframe
+hlaDQA1_all = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = T)]
+RESULTS_DQA1_all = Reduce(function(x, y) merge(x, y, by = "hla"), hlaDQA1_all)
+RESULTS_DQA1_all_f = RESULTS_DQA1_all[, grep(pattern = "Std.Error", colnames(RESULTS_DQA1_all), invert = T)]
+write.table(x = RESULTS_DQA1_all_f, file = paste(tabl,"results_hla_DQA1_allmodels.tsv", sep=''), 
+            sep = "\t", quote = F, row.names = F)
+# save all the result lists for filtered HLA-A in a dataframe 
+hlaDQA1_expr = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = F)]
+RESULTS_DQA1_expr = Reduce(function(x, y) merge(x, y, by = "hla"), hlaDQA1_expr)
+##### at the moment ignore residuals
+RESULTS_DQA1_expr = RESULTS_DQA1_expr[,grep(pattern = "res", x = colnames(RESULTS_DQA1_expr), invert = TRUE)]
+# filter HLA with 2 variable with pvalue lowere than .1
+atleast_1sign = rowSums(RESULTS_DQA1_expr[,grep(c("pvalue"), 
+                                                x = colnames(RESULTS_DQA1_expr))] < 0.1) > 1
+signTable_DQA1 = RESULTS_DQA1_expr[atleast_1sign,]
+Est = signTable_DQA1[,grep(c("Estimate"), x = colnames(signTable_DQA1))]
+# protection
+Est_p = Est < 0
+protection_DQA1 = signTable_DQA1[apply(Est_p, 1, function(x) all(x)),"hla"]
+# susceptibility
+Est_s = Est > 0
+susceptibility_DQA1 = signTable_DQA1[apply(Est_s, 1, function(x) all(x)),"hla"]
+susceptibility_DQA1; protection_DQA1 
+
+# ---- heatmap with pheatmap -----
+allele = "DQA1"
+data = RES_HLA$continue_expr[,c("Abbott_pvalue", "Roche_pvalue", "Diasorin_pvalue")]
+data = -log10(data)
+row.names(data) = RES_HLA$continue_expr$hla
+colnames(data) = c("Abbott", "Roche", "Diasorin")
+suppressMessages(library('pheatmap'))
+minH = 0; maxH=2
+myb = seq(minH, maxH, by = 0.01)
+crp <- colorRampPalette(c('dodgerblue4','white','darkred'))
+myc <- crp(length(myb))
+ann_data = RES_HLA$continue_expr[,c("Abbott_Estimate","Roche_Estimate", "Diasorin_Estimate")]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_HLA$continue_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$Abbott_Estimate))
+colnames(ann_data_2) = c("A_Coeff","R_Coeff", "D_Coeff")
+ann_colors = list(
+  A_Coeff = mycol,
+  R_Coeff = mycol,
+  D_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = T, treeheight_row = 0,
+         treeheight_col = 15, filename = paste(plt,"HLA", allele, "_antibody_pvalue_heatmap.png", sep =''))
+
+
+data = RES_HLA$binomial_expr[,c("swab_pvalue", "GTA_pvalue", "GTB_pvalue", "GTC_pvalue")]
+data = -log10(data)
+row.names(data) = RES_HLA$binomial_expr$hla
+colnames(data) = c("swab", "GTA", "GTB", "GTC")
+ann_data = RES_HLA$binomial_expr[,c("swab_Estimate","GTA_Estimate", "GTB_Estimate", "GTC_Estimate")]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_HLA$binomial_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$swab_Estimate))
+colnames(ann_data_2) = c("swab_Coeff","GTA_Coeff", "GTB_Coeff", "GTC_Coeff")
+ann_colors = list(
+  swab_Coeff = mycol,
+  GTA_Coeff = mycol,
+  GTB_Coeff = mycol,
+  GTC_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = T, treeheight_row = 0,
+         treeheight_col = 15, 
+         filename = paste(plt,"/HLA", allele,"_binomial_pvalue_heatmap.png", sep =''))
+
+
+data = RES_HLA$residuals_expr[,c("resAbbott_pvalue", "resRoche_pvalue", "resDiasorin_pvalue",
+                                 "resGTB_pvalue", "resGTC_pvalue")]
+data = -log10(data)
+row.names(data) = RES_HLA$residuals_expr$hla
+colnames(data) = c("Abbott", "Roche", "Diasorin", "GTB", "GTC")
+minH = 0; maxH=2
+myb = seq(minH, maxH, by = 0.01)
+crp <- colorRampPalette(c('dodgerblue4','white','darkred'))
+myc <- crp(length(myb))
+ann_data = RES_HLA$residuals_expr[,c("resAbbott_Estimate","resRoche_Estimate", "resDiasorin_Estimate",
+                                     "resGTB_Estimate", "resGTC_Estimate")]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_HLA$residuals_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$resAbbott_Estimate))
+colnames(ann_data_2) = c("A_Coeff","R_Coeff", "D_Coeff", "GTB_Coeff", "GTC_Coeff")
+ann_colors = list(
+  A_Coeff = mycol,
+  R_Coeff = mycol,
+  D_Coeff = mycol,
+  GTB_Coeff = mycol,
+  GTC_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = T, treeheight_row = 0,
+         treeheight_col = 15, filename = paste(plt,"/HLA", allele,"_residuals_pvalue_heatmap.png", sep =''))
+dev.off()
+
+
+# -------- HLA-DQB1 --------
+M_hla.dqb1 = Create.HLAMatrix(file = file_hla_typing, allele = "DQB1", 
+                              rownames = "Barcode", tool = tool_typing)
+# Add metadata
+M_hla.dqb1.complete = addMetadata(M_hla.dqb1, metadata = metadata_Vo_HLA, clean_output = TRUE)
+# save the results (ignore 6 warning, columns are then renamed in the function)
+RES_HLA = results_all(M_hla.complete = M_hla.dqb1.complete, allele = "DQB1", countFilter = 10)
+
+# save all the result lists for all HLA-DQB1 in a dataframe
+hlaDQB1_all = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = T)]
+RESULTS_DQB1_all = Reduce(function(x, y) merge(x, y, by = "hla"), hlaDQB1_all)
+RESULTS_DQB1_all_f = RESULTS_DQB1_all[, grep(pattern = "Std.Error", colnames(RESULTS_DQB1_all), invert = T)]
+write.table(x = RESULTS_DQB1_all_f, file = paste(tabl,"results_hla_DQB1_allmodels.tsv", sep=''), 
+            sep = "\t", quote = F, row.names = F)
+# save all the result lists for filtered HLA-DQB1 in a dataframe 
+hlaDQB1_expr = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = F)]
+RESULTS_DQB1_expr = Reduce(function(x, y) merge(x, y, by = "hla"), hlaDQB1_expr)
+##### at the moment ignore residuals
+RESULTS_DQB1_expr = RESULTS_DQB1_expr[,grep(pattern = "res", x = colnames(RESULTS_DQB1_expr), invert = TRUE)]
+# filter HLA with 2 variable with pvalue lowere than .1
+atleast_1sign = rowSums(RESULTS_DQB1_expr[,grep(c("pvalue"), 
+                                                x = colnames(RESULTS_DQB1_expr))] < 0.1) > 1
+signTable_DQB1 = RESULTS_DQB1_expr[atleast_1sign,]
+Est = signTable_DQB1[,grep(c("Estimate"), x = colnames(signTable_DQB1))]
+# protection
+Est_p = Est < 0
+protection_DQB1 = signTable_DQB1[apply(Est_p, 1, function(x) all(x)),"hla"]
+# susceptibility
+Est_s = Est > 0
+susceptibility_DQB1 = signTable_DQB1[apply(Est_s, 1, function(x) all(x)),"hla"]
+susceptibility_DQB1; protection_DQB1 
+
+# -------- HLA-DQB1 plots --------
+# ---- heatmap with pheatmap -----
+allele = "DQB1"
+data = RES_HLA$continue_expr[,c("Abbott_pvalue", "Roche_pvalue", "Diasorin_pvalue")]
+data = -log10(data)
+row.names(data) = RES_HLA$continue_expr$hla
+colnames(data) = c("Abbott", "Roche", "Diasorin")
+suppressMessages(library('pheatmap'))
+minH = 0; maxH=2
+myb = seq(minH, maxH, by = 0.01)
+crp <- colorRampPalette(c('dodgerblue4','white','darkred'))
+myc <- crp(length(myb))
+ann_data = RES_HLA$continue_expr[,c("Abbott_Estimate","Roche_Estimate", "Diasorin_Estimate")]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_HLA$continue_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$Abbott_Estimate))
+colnames(ann_data_2) = c("A_Coeff","R_Coeff", "D_Coeff")
+ann_colors = list(
+  A_Coeff = mycol,
+  R_Coeff = mycol,
+  D_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = T, treeheight_row = 0,
+         treeheight_col = 15, filename = paste(plt,"HLA", allele, "_antibody_pvalue_heatmap.png", sep =''))
+
+
+data = RES_HLA$binomial_expr[,c("swab_pvalue", "GTA_pvalue", "GTB_pvalue", "GTC_pvalue")]
+data = -log10(data)
+row.names(data) = RES_HLA$binomial_expr$hla
+colnames(data) = c("swab", "GTA", "GTB", "GTC")
+ann_data = RES_HLA$binomial_expr[,c("swab_Estimate","GTA_Estimate", "GTB_Estimate", "GTC_Estimate")]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_HLA$binomial_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$swab_Estimate))
+colnames(ann_data_2) = c("swab_Coeff","GTA_Coeff", "GTB_Coeff", "GTC_Coeff")
+ann_colors = list(
+  swab_Coeff = mycol,
+  GTA_Coeff = mycol,
+  GTB_Coeff = mycol,
+  GTC_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = T, treeheight_row = 0,
+         treeheight_col = 15, 
+         filename = paste(plt,"/HLA", allele,"_binomial_pvalue_heatmap.png", sep =''))
+
+
+data = RES_HLA$residuals_expr[,c("resAbbott_pvalue", "resRoche_pvalue", "resDiasorin_pvalue",
+                                 "resGTB_pvalue", "resGTC_pvalue")]
+data = -log10(data)
+row.names(data) = RES_HLA$residuals_expr$hla
+colnames(data) = c("Abbott", "Roche", "Diasorin", "GTB", "GTC")
+minH = 0; maxH=2
+myb = seq(minH, maxH, by = 0.01)
+crp <- colorRampPalette(c('dodgerblue4','white','darkred'))
+myc <- crp(length(myb))
+ann_data = RES_HLA$residuals_expr[,c("resAbbott_Estimate","resRoche_Estimate", "resDiasorin_Estimate",
+                                     "resGTB_Estimate", "resGTC_Estimate")]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_HLA$residuals_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$resAbbott_Estimate))
+colnames(ann_data_2) = c("A_Coeff","R_Coeff", "D_Coeff", "GTB_Coeff", "GTC_Coeff")
+ann_colors = list(
+  A_Coeff = mycol,
+  R_Coeff = mycol,
+  D_Coeff = mycol,
+  GTB_Coeff = mycol,
+  GTC_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = T, treeheight_row = 0,
+         treeheight_col = 15, filename = paste(plt,"/HLA", allele,"_residuals_pvalue_heatmap.png", sep =''))
+dev.off()
+
+# ---- boxplot with ggplot2 -----
+# HLA-DQB1*03:03
+d = M_hla.dqb1.complete[,c("HLA-DQB1*03:03", "Abbot_semiquantitative", 
+                        "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
+colnames(d) = c("HLA-DQB1*03:03", "Abbot", "Roche", "Diasorin")
+d$`HLA-DQB1*03:03` = factor(d$`HLA-DQB1*03:03`)
+dd = gather(d, key=antibody, value=value, -`HLA-DQB1*03:03`)
+dd$antibody = factor(dd$antibody, levels = c("Abbot", "Roche", "Diasorin"))
+ggplot(data = dd, aes(x =`HLA-DQB1*03:03`, y = value, 
+                      color = antibody, fill = antibody)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-DQB1*03:03") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(antibody ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_antibody_mean_HLA.DQB1.03.03.png", sep = ''), width = 4, height = 3)
+
+
+d = M_hla.dqb1.complete[,c("HLA-DQB1*06:03", "Abbot_semiquantitative", 
+                           "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
+colnames(d) = c("HLA-DQB1*06:03", 
+                "Abbot", "Roche", "Diasorin")
+
+d$`HLA-DQB1*06:03` = factor(d$`HLA-DQB1*06:03`)
+dd = gather(d, key=antibody, value=value, -`HLA-DQB1*06:03`)
+dd$antibody = factor(dd$antibody, levels = c("Abbot", "Roche", "Diasorin"))
+ggplot(data = dd, aes(x =`HLA-DQB1*06:03`, y = value, 
+                      color = antibody, fill = antibody)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-DQB1*06:03") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(antibody ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_antibody_mean_HLA.DQB1.06.03.png", sep = ''), width = 4, height = 3)
+
+#"HLA-DQB1*05:01"
+d = M_hla.dqb1.complete[,c("HLA-DQB1*05:01", "Abbot_semiquantitative", 
+                           "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
+colnames(d) = c("HLA-DQB1*05:01", "Abbot", "Roche", "Diasorin")
+d$`HLA-DQB1*05:01` = factor(d$`HLA-DQB1*05:01`)
+dd = gather(d, key=antibody, value=value, -`HLA-DQB1*05:01`)
+dd$antibody = factor(dd$antibody, levels = c("Abbot", "Roche", "Diasorin"))
+ggplot(data = dd, aes(x =`HLA-DQB1*05:01`, y = value, 
+                      color = antibody, fill = antibody)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-DQB1*05:01") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(antibody ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_antibody_mean_HLA.DQB1.05.01.png", sep = ''), width = 4, height = 3)
+
+
+
+# -------- HLA-DRB1 --------
+M_hla.drb1 = Create.HLAMatrix(file = file_hla_typing, allele = "DRB1", 
+                              rownames = "Barcode", tool = tool_typing)
+# Add metadata
+M_hla.drb1.complete = addMetadata(M_hla.drb1, metadata = metadata_Vo_HLA, clean_output = TRUE)
+# save the results (ignore 6 warning, columns are then renamed in the function)
+RES_HLA = results_all(M_hla.complete = M_hla.drb1.complete, allele = "DRB1", countFilter = 10)
+
+# save all the result lists for all HLA-DRB1 in a dataframe
+hlaDRB1_all = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = T)]
+RESULTS_DRB1_all = Reduce(function(x, y) merge(x, y, by = "hla"), hlaDRB1_all)
+RESULTS_DRB1_all_f = RESULTS_DRB1_all[, grep(pattern = "Std.Error", colnames(RESULTS_DRB1_all), invert = T)]
+write.table(x = RESULTS_DRB1_all_f, file = paste(tabl,"results_hla_DRB1_allmodels.tsv", sep=''), 
+            sep = "\t", quote = F, row.names = F)
+# save all the result lists for filtered HLA-DRB1 in a dataframe 
+hlaDRB1_expr = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = F)]
+RESULTS_DRB1_expr = Reduce(function(x, y) merge(x, y, by = "hla"), hlaDRB1_expr)
+##### at the moment ignore residuals
+RESULTS_DRB1_expr = RESULTS_DRB1_expr[,grep(pattern = "res", x = colnames(RESULTS_DRB1_expr), invert = TRUE)]
+# filter HLA with 2 variable with pvalue lowere than .1
+atleast_1sign = rowSums(RESULTS_DRB1_expr[,grep(c("pvalue"), 
+                                                x = colnames(RESULTS_DRB1_expr))] < 0.1) > 1
+signTable_DRB1 = RESULTS_DRB1_expr[atleast_1sign,]
+Est = signTable_DRB1[,grep(c("Estimate"), x = colnames(signTable_DRB1))]
+# protection
+Est_p = Est < 0
+protection_DRB1 = signTable_DRB1[apply(Est_p, 1, function(x) all(x)),"hla"]
+# susceptibility
+Est_s = Est > 0
+susceptibility_DRB1 = signTable_DRB1[apply(Est_s, 1, function(x) all(x)),"hla"]
+susceptibility_DRB1; protection_DRB1 
+
+# ---- heatmap with pheatmap -----
+allele = "DRB1"
+data = RES_HLA$continue_expr[,c("Abbott_pvalue", "Roche_pvalue", "Diasorin_pvalue")]
+data = -log10(data)
+row.names(data) = RES_HLA$continue_expr$hla
+colnames(data) = c("Abbott", "Roche", "Diasorin")
+suppressMessages(library('pheatmap'))
+minH = 0; maxH=2
+myb = seq(minH, maxH, by = 0.01)
+crp <- colorRampPalette(c('dodgerblue4','white','darkred'))
+myc <- crp(length(myb))
+ann_data = RES_HLA$continue_expr[,c("Abbott_Estimate","Roche_Estimate", "Diasorin_Estimate")]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_HLA$continue_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$Abbott_Estimate))
+colnames(ann_data_2) = c("A_Coeff","R_Coeff", "D_Coeff")
+ann_colors = list(
+  A_Coeff = mycol,
+  R_Coeff = mycol,
+  D_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = T, treeheight_row = 0,
+         treeheight_col = 15, filename = paste(plt,"HLA", allele, "_antibody_pvalue_heatmap.png", sep =''))
+
+
+data = RES_HLA$binomial_expr[,c("swab_pvalue", "GTA_pvalue", "GTB_pvalue", "GTC_pvalue")]
+data = -log10(data)
+row.names(data) = RES_HLA$binomial_expr$hla
+colnames(data) = c("swab", "GTA", "GTB", "GTC")
+ann_data = RES_HLA$binomial_expr[,c("swab_Estimate","GTA_Estimate", "GTB_Estimate", "GTC_Estimate")]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_HLA$binomial_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$swab_Estimate))
+colnames(ann_data_2) = c("swab_Coeff","GTA_Coeff", "GTB_Coeff", "GTC_Coeff")
+ann_colors = list(
+  swab_Coeff = mycol,
+  GTA_Coeff = mycol,
+  GTB_Coeff = mycol,
+  GTC_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = T, treeheight_row = 0,
+         treeheight_col = 15, 
+         filename = paste(plt,"/HLA", allele,"_binomial_pvalue_heatmap.png", sep =''))
+
+
+data = RES_HLA$residuals_expr[,c("resAbbott_pvalue", "resRoche_pvalue", "resDiasorin_pvalue",
+                                 "resGTB_pvalue", "resGTC_pvalue")]
+data = -log10(data)
+row.names(data) = RES_HLA$residuals_expr$hla
+colnames(data) = c("Abbott", "Roche", "Diasorin", "GTB", "GTC")
+minH = 0; maxH=2
+myb = seq(minH, maxH, by = 0.01)
+crp <- colorRampPalette(c('dodgerblue4','white','darkred'))
+myc <- crp(length(myb))
+ann_data = RES_HLA$residuals_expr[,c("resAbbott_Estimate","resRoche_Estimate", "resDiasorin_Estimate",
+                                     "resGTB_Estimate", "resGTC_Estimate")]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_HLA$residuals_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$resAbbott_Estimate))
+colnames(ann_data_2) = c("A_Coeff","R_Coeff", "D_Coeff", "GTB_Coeff", "GTC_Coeff")
+ann_colors = list(
+  A_Coeff = mycol,
+  R_Coeff = mycol,
+  D_Coeff = mycol,
+  GTB_Coeff = mycol,
+  GTC_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = T, treeheight_row = 0,
+         treeheight_col = 15, filename = paste(plt,"/HLA", allele,"_residuals_pvalue_heatmap.png", sep =''))
+dev.off()
+
+# ---- boxplot with ggplot2 -----
+# HLA-DRB1*11:04
+d = M_hla.drb1.complete[,c("HLA-DRB1*11:04", "Abbot_semiquantitative", 
+                           "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
+colnames(d) = c("HLA-DRB1*11:04", "Abbot", "Roche", "Diasorin")
+d$`HLA-DRB1*11:04` = factor(d$`HLA-DRB1*11:04`)
+dd = gather(d, key=antibody, value=value, -`HLA-DRB1*11:04`)
+dd$antibody = factor(dd$antibody, levels = c("Abbot", "Roche", "Diasorin"))
+ggplot(data = dd, aes(x =`HLA-DRB1*11:04`, y = value, 
+                      color = antibody, fill = antibody)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-DRB1*11:04") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(antibody ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_antibody_mean_HLA.DRB1.11.04.png", sep = ''), width = 4, height = 3)
+
+
+
+# HLA-DRB1*11:01
+d = M_hla.drb1.complete[,c("HLA-DRB1*11:01", "Abbot_semiquantitative", 
+                           "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
+colnames(d) = c("HLA-DRB1*11:01", "Abbot", "Roche", "Diasorin")
+d$`HLA-DRB1*11:01` = factor(d$`HLA-DRB1*11:01`)
+dd = gather(d, key=antibody, value=value, -`HLA-DRB1*11:01`)
+dd$antibody = factor(dd$antibody, levels = c("Abbot", "Roche", "Diasorin"))
+ggplot(data = dd, aes(x =`HLA-DRB1*11:01`, y = value, 
+                      color = antibody, fill = antibody)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-DRB1*11:01") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(antibody ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_antibody_mean_HLA.DRB1.11.01.png", sep = ''), width = 4, height = 3)
+
+
+
 
 # -------- Protection/Susceptibility table ---------
 # Summary
