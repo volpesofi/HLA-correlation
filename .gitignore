@@ -4,3 +4,4 @@ plots_*/
 # ignore Rdata
 *.RData
 *.Rapp.history
+hla_statistics_bk.R
