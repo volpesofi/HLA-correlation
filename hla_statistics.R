@@ -12,16 +12,16 @@ suppressMessages(library(viridis))
 setwd('/beegfs/scratch/ric.cosr/ric.cosr/Vo_WGS/hla_statistics/')
 
 # ------ input file ------
-file_hla_typing = 'input/fished_all_tops.tsv'
+#file_hla_typing = 'input/fished_all_tops.tsv'
 #file_hla_typing = 'input/optitype_results_classI.tsv'
-#file_hla_typing = 'input/hlavbseq_results.tsv'
+file_hla_typing = 'input/hlavbseq_results.tsv'
 
 # --- create dir for outputs ----
 #tool_typing = "optitype"
-#tool_typing = "hlavbseq"
-tool_typing = "bwakit"
-tabl = paste("tables", tool_typing, sep ='_') 
-plt = paste("plots", tool_typing, sep ='_') 
+tool_typing = "hlavbseq"
+#tool_typing = "bwakit"
+tabl = paste("tables_", tool_typing, "/",  sep ='') 
+plt = paste("plots_", tool_typing, "/",sep ='') 
 
 dir.create(tabl, recursive = T, showWarnings = F)
 dir.create(plt, recursive = T, showWarnings = F)
