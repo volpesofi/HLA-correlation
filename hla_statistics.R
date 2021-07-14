@@ -13,12 +13,12 @@ setwd('/beegfs/scratch/ric.cosr/ric.cosr/Vo_WGS/hla_statistics/')
 
 # ------ input file ------
 #file_hla_typing = 'input/fished_all_tops.tsv'
-#file_hla_typing = 'input/optitype_results_classI.tsv'
-file_hla_typing = 'input/hlavbseq_results.tsv'
+file_hla_typing = 'input/optitype_results_classI.tsv'
+#file_hla_typing = 'input/hlavbseq_results.tsv'
 
 # --- create dir for outputs ----
-#tool_typing = "optitype"
-tool_typing = "hlavbseq"
+tool_typing = "optitype"
+#tool_typing = "hlavbseq"
 #tool_typing = "bwakit"
 tabl = paste("tables_", tool_typing, "/",  sep ='') 
 plt = paste("plots_", tool_typing, "/",sep ='') 
@@ -38,10 +38,11 @@ HLA_t$Sample_name_WGS = str_sub(string = str_remove_all(HLA_t$Sample_name_WGS, p
 # ------ metadata ---------
 # metadata_Vo.xlsx was downloaded from Dropbox on 10/05
 # read metadata
-metadata_Vo = read.xlsx(xlsxFile = "input/metadata_Vo.xlsx")
+metadata_Vo = read.xlsx(xlsxFile = "/beegfs/scratch/ric.cosr/ric.cosr/Vo_WGS/hla_statistics/input/metadata_Vo.xlsx")
 # modify Barcodes format to match the HLA table one
 metadata_Vo[grep(pattern = "^0", x = metadata_Vo$Barcode), "Barcode"] = str_sub(metadata_Vo$Barcode[grep(pattern = "^0", x = metadata_Vo$Barcode)], 
-                                                                                start = 2, end = -1)
+
+                                                                                                                                                           start = 2, end = -1)
 # save Barcode as row.names
 row.names(metadata_Vo) = metadata_Vo$Barcode
 # filter metadata for available WGS samples
@@ -50,6 +51,21 @@ metadata_Vo_HLA = metadata_Vo[WGSsamples,]
 metadata_Vo_HLA$WGS = HLA_t$Sample_name_WGS[HLA_t$Barcode %in% row.names(metadata_Vo_HLA)]
 #sort metadata alphabetically
 metadata_Vo_HLA = metadata_Vo_HLA[order(metadata_Vo_HLA$WGS),]
+
+TCRt = read.table(file = "input/TCR_data.csv", sep = ",", header = T)
+colnames(TCRt)[1] <- "Barcode"
+head(TCRt)
+#TCRt$Barcode =  
+
+
+TCRt$Barcode = str_remove(string = str_remove(string = TCRt$Barcode, pattern = "^0"), 
+           pattern = "_TCRB")
+
+setdiff(TCRt$Barcode, metadata_Vo_HLA$Barcode)
+setdiff(metadata_Vo_HLA$Barcode, TCRt$Barcode)
+metadata_Vo_HLA_TCR = merge(metadata_Vo_HLA, TCRt, by = "Barcode", all.x = TRUE)                                                                              
+row.names(metadata_Vo_HLA_TCR) = metadata_Vo_HLA_TCR$Barcode
+
 
 # ------ residuals -------
 # Read input residual sent by Helen on 30/05
@@ -103,25 +119,25 @@ twodigit <- function(file, sep = "\t", rownames = "Barcode") {
 #' M_HLA = Create.HLAMatrix(file = "input/fished_all_tops.tsv", allele = "A",
 #'                        sep = '\t', rownames = "Sample_name_WGS")
 #' @export
-Create.HLAMatrix <- function(file, allele, sep = '\t',rownames = "Barcode", tool) {
+Create.HLAMatrix <- function(file, allele, sep = '\t',rownames = "Barcode", tool, digit = 2) {
   HLA_t = read.table(file = file , header = T, sep = sep, check.names = F)
   HLA_t$Barcode = as.character(HLA_t$Barcode)
   HLA_allele= HLA_t[,grep(x = colnames(HLA_t),pattern = "HLA")]
   
-  fx <- function(x) {
+  fx <- function(x, N) {
     a = strsplit(x, '\\*')
     for (i in 1:length(a)) { 
-      a[[i]][2] = str_sub(string = a[[i]][2], start = 1, end = 5)
+      digit = unlist(str_split(string = a[[i]][2], pattern = ":"))
+      a[[i]][2] = paste(digit[1:N], collapse = ":")
       if (a[[i]][1] == "n/a") {
         a[[i]] = a[[i]][1]
       } else {
         a[[i]] = paste(a[[i]], collapse = "*")
       }
-      }
-    return(unlist(a))
-    ### str_sub(string = x, start = 1, end = 11)
     }
-  HLA_twodigit = as.data.frame(sapply(HLA_allele, fx))
+    return(unlist(a))
+  }
+  HLA_twodigit = as.data.frame(sapply(HLA_allele, fx, N = digit))
   row.names(HLA_twodigit) <- HLA_t[,rownames]
   colnames(HLA_twodigit) <- str_replace_all(string = colnames(HLA_twodigit), 
                                             pattern = "-", replacement = "")
