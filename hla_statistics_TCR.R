@@ -54,18 +54,16 @@ metadata_Vo_HLA = metadata_Vo_HLA[order(metadata_Vo_HLA$WGS),]
 
 TCRt = read.table(file = "input/TCR_data.csv", sep = ",", header = T)
 colnames(TCRt)[1] <- "Barcode"
-head(TCRt)
-#TCRt$Barcode =  
 
-
-TCRt$Barcode = str_remove(string = str_remove(string = TCRt$Barcode, pattern = "^0"), 
-           pattern = "_TCRB")
+TCRt$Barcode = str_remove(string = str_remove(string = TCRt$Barcode, 
+                                              pattern = "^0"), 
+                          pattern = "_TCRB")
 
 setdiff(TCRt$Barcode, metadata_Vo_HLA$Barcode)
 setdiff(metadata_Vo_HLA$Barcode, TCRt$Barcode)
 metadata_Vo_HLA_TCR = merge(metadata_Vo_HLA, TCRt, by = "Barcode", all.x = TRUE)                                                                              
 row.names(metadata_Vo_HLA_TCR) = metadata_Vo_HLA_TCR$Barcode
-
+metadata_Vo_HLA_TCR["3855000012818", ]
 
 # ------ residuals -------
 # Read input residual sent by Helen on 30/05
@@ -78,11 +76,14 @@ for (fl in ls_res) {
   print(str_sub(string = fl, start = 1, end = -16))
   f = read.table(paste("input/",fl, sep =''))
   metadata_Vo_HLA$resid = NA
+  metadata_Vo_HLA_TCR$resid = NA
   # correct two sampleID cause these were rerunned in a second run with different ID
   f[f$V1 == "1255WGS2D2","V1"] = "1255WGS31A4merged"
   f[f$V1 == "1255WGS1B11","V1"] = "1255WGS31E4merged"
   metadata_Vo_HLA[metadata_Vo_HLA$WGS %in% f$V1,"resid"] = f$V2 
+  metadata_Vo_HLA_TCR[metadata_Vo_HLA_TCR$WGS %in% f$V1,"resid"] = f$V2 
   colnames(metadata_Vo_HLA)[dim(metadata_Vo_HLA)[2]] <- str_sub(string = fl, start = 1, end = -16)
+  colnames(metadata_Vo_HLA_TCR)[dim(metadata_Vo_HLA_TCR)[2]] <- str_sub(string = fl, start = 1, end = -16)
 }
 
 # -------- my_functions -----------
@@ -190,7 +191,9 @@ addMetadata = function(M,
                                     "Diasorin_IgG_semiquantitative",
                                     "WGS",
                                     "resid_abbot", "resid_roche", "resid_diasorin",
-                                    "resid_GTB", "resid_GTC"),
+                                    "resid_GTB", "resid_GTC", 
+                                    "breadth_classI","breadth_classII", 
+                                    "depth_classI", "depth_classII"),
                        clean_output = TRUE) {
   M = M[metadata$Barcode,] # order input matrix as metadata 
   M_hla_meta = as.data.frame(cbind(M, 
@@ -555,17 +558,268 @@ results_all = function(M_hla.complete,
   return(res)
 }
 
+#' function to produce a list of dataframes with the results of glm and lm for 
+#' the variable of interest: swabs, GTA, GTB, GTC, antibody level, residuals
+#' @param M_hla is the hla count matrix produced by CreateMatrix.
+#' @param allele tag for output files "A", "B" "C"
+#' @param countFilter number of min HLA counts use to filter data before FDR evaluation, def is 10
+#' @return List of data frames with results of glm and lm for each var of interest
+#' @examples 
+#' results_all(M_hla.a.complete, allele = "A", countFilter = 10)
+#' M_hla = M_hla.b; allele = "B"; countFilter = 10; metadata= metadata_Vo_HLA_TCR
+results_TCR = function(M_hla, 
+                       metadata,
+                       allele = c("A", "B", "C"), 
+                       countFilter = 10){
+  #add metadata
+  M_hla.complete = addMetadata(M_hla, metadata = metadata, 
+                                 info2add = c("Gender", "positive_swab", "Groundtruth_GTA",
+                                              "Groundtruth_direct_contacts_GTB",
+                                              "Groundtruth_indirect_contacts_GTC",
+                                              "Abbot_semiquantitative", 
+                                              "Roche_Total_ICO", 
+                                              "Diasorin_IgG_semiquantitative",
+                                              "WGS",
+                                              "breadth_classI","breadth_classII", 
+                                              "depth_classI", "depth_classII"),
+                                 clean_output = TRUE)
+  # expr
+  filter = colSums(M_hla.complete[,grepl(x = colnames(M_hla.complete), 
+                                         pattern = "^HLA")]) > countFilter
+  HLAexp = colnames(M_hla.complete)[grepl("^HLA", colnames(M_hla.complete))][filter]
+  # ---- Save linear modeling continuous variable ----
+  if (allele %in% c("A", "B", "C")) { 
+    v.breadth = "breadth_classI" 
+    v.depth = "depth_classI"
+  } else {
+    v.breadth = "breadth_classII" 
+    v.depth = "depth_classII"
+  }
+  lm_breadth_hla = hla_lm(M = M_hla.complete, 
+                                 var = v.breadth, 
+                                 allele = allele, 
+                                 hla.as.factor = FALSE)
+  lm_depth_hla = hla_lm(M = M_hla.complete, 
+                               var = v.depth, 
+                               allele = allele, 
+                               hla.as.factor = FALSE)
+  
+  dataframe2join = list(breadth = lm_breadth_hla,
+                        depth   = lm_depth_hla)
+  i = 0
+  dataframe2join_expr = list()
+  for (df in dataframe2join) {
+    i = i + 1
+    df_expr = df[df$hla %in% HLAexp,]
+    df_expr$FDR = p.adjust(df_expr$pvalue, method = "BH")
+    dataframe2join_expr[[i]] = df_expr
+  }
+  names(dataframe2join_expr) = names(dataframe2join)
+  
+  RESULTS_LM = Reduce(function(x, y) merge(x, y, by = "hla"), dataframe2join)
+  # note that this function give a warning cause the columns of dataframe to merge
+  # have the same name - they are therefore renames:
+  conames_LM = crossing(x = factor(names(dataframe2join), 
+                                   levels = names(dataframe2join)),
+                        y = factor(c("Estimate", "Std.Error","pvalue"), 
+                                   levels = c("Estimate", "Std.Error","pvalue"))) %>% 
+    unite("z", x:y, remove = TRUE)
+  colnames(RESULTS_LM) = c("hla", conames_LM$z)
+  # 
+  RESULTS_LM_expr = Reduce(function(x, y) merge(x, y, by = "hla"), dataframe2join_expr)
+  # note that this function give a warning cause the columns of dataframe to merge
+  # have the same name - they are therefore renames:
+  conames_LM = crossing(x = factor(names(dataframe2join_expr), 
+                                   levels = names(dataframe2join_expr)),
+                        y = factor(c("Estimate", "Std.Error","pvalue", "FDR"), 
+                                   levels = c("Estimate", "Std.Error","pvalue", "FDR"))) %>% 
+    unite("z", x:y, remove = TRUE)
+  colnames(RESULTS_LM_expr) = c("hla", conames_LM$z)
+  
+  write.table(x = RESULTS_LM, 
+              file = paste(tabl,"RESULTS_HLA_", allele,
+                           "_TCR_linearModel_statistics.tsv", sep =''), 
+              sep = "\t",
+              row.names = F, quote = F)
+  write.table(x = RESULTS_LM_expr, 
+              file = paste(tabl,"RESULTSexpr",countFilter,"_HLA_",allele,
+                           "_TCR_linearModel_statistics.tsv", sep =''), 
+              sep = "\t",
+              row.names = F, quote = F)
+  # save dataset in list
+  res = list(tcr = RESULTS_LM,
+             tcr_expr = RESULTS_LM_expr)
+  return(res)
+}
+
+metadata = metadata_Vo_HLA_TCR
+TCR_lm = function(metadata){
+  data = metadata
+  data = data[!is.na(data$depth_classI),]
+  data = data[!is.na(data$breadth_classI),]
+  data$Groundtruth_GTA[is.na(data$Groundtruth_GTA)] = 0
+  data$Groundtruth_direct_contacts_GTB[is.na(data$Groundtruth_direct_contacts_GTB)] = 0
+  data$Groundtruth_indirect_contacts_GTC[is.na(data$Groundtruth_indirect_contacts_GTC)] = 0
+  data$swabs = NA
+  data$swabs[data$positive_swab] = 1
+  data$swabs[!data$positive_swab] = 0
+  df_breadth = data.frame()
+  df_depth = data.frame()
+  df_breadthII = data.frame()
+  df_depthII = data.frame()
+  for (var in c("Abbot_semiquantitative", "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")) {
+    lm_breadth = lm(data[,var] ~ data[,"breadth_classI"])
+    df_entry = data.frame(var = var, 
+                          Estimate = summary(lm_breadth)$coefficients[2,1],
+                          Std.Error = summary(lm_breadth)$coefficients[2,2],
+                          pvalue = summary(lm_breadth)$coefficients[2,4],
+                          Rsquared = summary(lm_breadth)$r.squared)
+    df_breadth = rbind(df_breadth, df_entry)
+    # depth
+    lm_depth = lm(data[,var] ~ data[,"depth_classI"])
+    df_entry = data.frame(var = var, 
+                          Estimate = summary(lm_depth)$coefficients[2,1],
+                          Std.Error = summary(lm_depth)$coefficients[2,2],
+                          pvalue = summary(lm_depth)$coefficients[2,4],
+                          Rsquared = summary(lm_depth)$r.squared)
+    df_depth = rbind(df_depth, df_entry)
+    lm_breadth = lm(data[,var] ~ data[,"breadth_classII"])
+    df_entry = data.frame(var = var, 
+                          Estimate = summary(lm_breadth)$coefficients[2,1],
+                          Std.Error = summary(lm_breadth)$coefficients[2,2],
+                          pvalue = summary(lm_breadth)$coefficients[2,4],
+                          Rsquared = summary(lm_breadth)$r.squared)
+    df_breadthII = rbind(df_breadthII, df_entry)
+    # depth
+    lm_depth = lm(data[,var] ~ data[,"depth_classII"])
+    df_entry = data.frame(var = var, 
+                          Estimate = summary(lm_depth)$coefficients[2,1],
+                          Std.Error = summary(lm_depth)$coefficients[2,2],
+                          pvalue = summary(lm_depth)$coefficients[2,4],
+                          Rsquared = summary(lm_depth)$r.squared)
+    df_depthII = rbind(df_depthII, df_entry)
+  }
+  return(list(breadthI = df_breadth,  breadthII = df_breadthII, 
+              depthI = df_depth, depthII = df_depthII))
+}
+
+tcrLinear = TCR_lm(metadata = metadata_Vo_HLA_TCR)
+write.xlsx(tcrLinear, paste(tabl,"lm_antibody_TCR.xlsx", sep=''))
+
+var = "Abbot_semiquantitative"
+summary(lm(data[,var] ~ data[,"depth_classI"]))
+cor.test( ~ Abbot_semiquantitative + depth_classI, 
+          data = data,
+          method = "pearson",
+          conf.level = 0.95)
+cor.test( ~ Abbot_semiquantitative + depth_classI, 
+          data = data,
+          method = "spearman",
+          continuity = FALSE,
+          conf.level = 0.95)
+
+data = metadata
+data = data[!is.na(data$depth_classI),]
+data = data[!is.na(data$breadth_classI),]
+data$Groundtruth_GTA[is.na(data$Groundtruth_GTA)] = 0
+data$Groundtruth_direct_contacts_GTB[is.na(data$Groundtruth_direct_contacts_GTB)] = 0
+data$Groundtruth_indirect_contacts_GTC[is.na(data$Groundtruth_indirect_contacts_GTC)] = 0
+data$swabs = NA
+data$swabs[data$positive_swab] = 1
+data$swabs[!data$positive_swab] = 0
+ggplot(data=data, aes(x=depth_classI, y=Abbot_semiquantitative, group=1)) +
+  #geom_line()+
+  geom_point()
+ggplot(data=data, aes(x=breadth_classI, y=Abbot_semiquantitative, group=1)) +
+  #geom_line()+
+  geom_point() + 
+  stat_summary(fun.data=mean_cl_normal) + 
+  geom_smooth(method='lm', formula= y~x) +
+  theme_classic() 
+
+d = data[,c("breadth_classI", "Abbot_semiquantitative", 
+                        "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
+colnames(d) = c("breadth_classI", "Abbot", "Roche", "Diasorin")
+dd = gather(d, key=antibody, value=value, -breadth_classI)
+
+ggplot(data = dd, aes(x = breadth_classI, y = value, 
+                      color = antibody, fill = antibody)) + 
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x) +
+  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  facet_grid(antibody ~ ., scales = "free_y") + 
+  theme_linedraw() +
+  theme(legend.title = element_blank(), legend.position = "top")
+
+d = data[,c("depth_classI", "Abbot_semiquantitative", 
+            "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
+colnames(d) = c("depth_classI", "Abbot", "Roche", "Diasorin")
+dd = gather(d, key=antibody, value=value, -depth_classI)
+
+ggplot(data = dd, aes(x = depth_classI, y = value, 
+                      color = antibody, fill = antibody)) + 
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x) +
+  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  facet_grid(antibody ~ ., scales = "free_y") + 
+  theme_linedraw() +
+  theme(legend.title = element_blank(), legend.position = "top") 
+  
+d = data[,c("breadth_classII", "Abbot_semiquantitative", 
+            "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
+colnames(d) = c("breadth_classII", "Abbot", "Roche", "Diasorin")
+dd = gather(d, key=antibody, value=value, -breadth_classII)
+
+ggplot(data = dd, aes(x = breadth_classII, y = value, 
+                      color = antibody, fill = antibody)) + 
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x) +
+  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  facet_grid(antibody ~ ., scales = "free_y") + 
+  theme_linedraw() +
+  theme(legend.title = element_blank(), legend.position = "top") 
+
+
+d = data[,c("depth_classII", "Abbot_semiquantitative", 
+            "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
+colnames(d) = c("depth_classII", "Abbot", "Roche", "Diasorin")
+dd = gather(d, key=antibody, value=value, -depth_classII)
+
+ggplot(data = dd, aes(x = depth_classII, y = value, 
+                      color = antibody, fill = antibody)) + 
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x) +
+  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
+  facet_grid(antibody ~ ., scales = "free_y") + 
+  theme_linedraw() +
+  theme(legend.title = element_blank(), legend.position = "top") 
+
+
+
+ggplot(data = data, aes(x = as.factor(swabs), y = depth_classI)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  geom_point() +
+  theme(legend.title = element_blank(), legend.position = "top")
+
+
+
+
 # -------- ** Analysis starts here ** --------
 
 # -------- ***** Class I ***** --------
 # -------- HLA-A -------- 
 # create HLA matrix from HLA typing 
-M_hla.a = Create.HLAMatrix(file = file_hla_typing, allele = "A", 
+allele = "A"
+M_hla.a = Create.HLAMatrix(file = file_hla_typing, allele = allele, 
                            rownames = "Barcode", tool = tool_typing)
 # Add metadata
-M_hla.a.complete = addMetadata(M_hla.a, metadata = metadata_Vo_HLA, clean_output = TRUE)
+M_hla.a.complete = addMetadata(M_hla.a, metadata = metadata_Vo_HLA_TCR, clean_output = TRUE)
 # save the results (ignore 6 warning, columns are then renamed in the function)
-RES_HLA = results_all(M_hla.complete = M_hla.a.complete, allele = "A", countFilter = 10)
+RES_HLA = results_all(M_hla.complete = M_hla.a.complete, allele = allele, countFilter = 10)
 
 # save all the result lists for all HLA-A in a dataframe
 hlaa_all = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = T)]
@@ -590,6 +844,26 @@ protection_A = signTable_A[apply(Est_p, 1, function(x) all(x)),"hla"]
 Est_s = Est > 0
 susceptibility_A = signTable_A[apply(Est_s, 1, function(x) all(x)),"hla"]
 susceptibility_A; protection_A 
+
+#------ TCR ----
+RES_TCR = results_TCR(M_hla = M_hla.a, metadata = metadata_Vo_HLA_TCR,
+                      allele = "A", countFilter = 10)
+# breadth 
+breadth = RES_TCR$tcr_expr[, grep(pattern = "breadth", x = colnames(RES_TCR$tcr_expr))]
+row.names(breadth) = RES_TCR$tcr_expr$hla
+breadth_sign = breadth[breadth$breadth_pvalue < 0.05,] 
+breadth_sign
+
+depth = RES_TCR$tcr_expr[, grep(pattern = "depth", x = colnames(RES_TCR$tcr_expr))]
+row.names(depth) = RES_TCR$tcr_expr$hla
+depth_sign = depth[depth$depth_pvalue < 0.05,] 
+depth_sign
+
+breadth$hla = row.names(breadth)
+depth$hla = row.names(depth)
+write.table(merge(breadth, depth, by = "hla"), 
+            file = paste(tabl, "lm_TCR_HLA_",allele,"_classI.tsv",sep = ''),
+            sep ='\t', quote = F, row.names = F)
 
 # ---- HLA-A plots --------
 # ---- heatmap with pheatmap -----
@@ -675,6 +949,32 @@ pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
          treeheight_col = 15, filename = paste(plt,"/HLA", allele,"_residuals_pvalue_heatmap.png", sep =''))
 dev.off()
 
+#data = RES_HLA$continue_expr[,c("Abbott_pvalue", "Roche_pvalue", "Diasorin_pvalue")]
+data = RES_TCR$tcr_expr[,grep("pvalue", colnames(RES_TCR$tcr_expr))]
+data = -log10(data)
+row.names(data) = RES_TCR$tcr_expr$hla
+colnames(data) = c("breadth", "depth")
+minH = 0; maxH=2
+myb = seq(minH, maxH, by = 0.01)
+crp <- colorRampPalette(c('dodgerblue4','white','darkred'))
+myc <- crp(length(myb))
+ann_data = RES_TCR$tcr_expr[,grep("Estimate", colnames(RES_TCR$tcr_expr))]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_TCR$tcr_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$breadth_Estimate))
+colnames(ann_data_2) = c("Br_Coeff","Dp_Coeff")
+ann_colors = list(
+  Br_Coeff = mycol,
+  Dp_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = F, treeheight_row = 0,
+         treeheight_col = 15, filename = paste(plt,"HLA", allele, "_TCR_pvalue_heatmap.png", sep =''))
+
+dev.off()
 # ---- boxplot with ggplot2 -----
 # HLA-A*02:01
 d = M_hla.a.complete[,c("HLA-A*02:01", "Abbot_semiquantitative", 
@@ -720,6 +1020,44 @@ ggplot(data = dd, aes(x =`HLA-A*02:01`, y = value,
   facet_grid(antibody ~ ., scales = "free_y") + 
   theme(legend.title = element_blank(), legend.position = "right")
 ggsave(paste(plt,"/boxplot_residuals_HLA.A.02.01.png", sep = ''), width = 8, height = 6.5)
+
+
+d = M_hla.a.complete[,c("HLA-A*02:01", "breadth_classI", "depth_classI")]
+colnames(d) = c("HLA-A*02:01", "breadth", "depth")
+d$`HLA-A*02:01` = factor(d$`HLA-A*02:01`)
+dd = gather(d, key=TCR, value=value, -`HLA-A*02:01`)
+dd$TCR = factor(dd$TCR, levels = c("breadth", "depth"))
+ggplot(data = dd, aes(x =`HLA-A*02:01`, y = value, 
+                      color = TCR, fill = TCR)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-A*02:01") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#6666FF", "#CC6600")) +
+  scale_fill_manual(values=c("#6666FF", "#CC6600")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(TCR ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_TCR_mean_HLA.A.02.01.png", sep = ''), width = 4, height = 3)
+
+d = M_hla.a.complete[,c("HLA-A*01:01", "breadth_classI", "depth_classI")]
+colnames(d) = c("HLA-A*01:01", "breadth", "depth")
+d$`HLA-A*01:01` = factor(d$`HLA-A*01:01`)
+dd = gather(d, key=TCR, value=value, -`HLA-A*01:01`)
+dd$TCR = factor(dd$TCR, levels = c("breadth", "depth"))
+ggplot(data = dd, aes(x =`HLA-A*01:01`, y = value, 
+                      color = TCR, fill = TCR)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-A*01:01") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#6666FF", "#CC6600")) +
+  scale_fill_manual(values=c("#6666FF", "#CC6600")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(TCR ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_TCR_mean_HLA.A.01.01.png", sep = ''), width = 4, height = 3)
+
 
 #HLA-A*26:01
 d = M_hla.a.complete[,c("HLA-A*26:01", "Abbot_semiquantitative", 
@@ -789,12 +1127,13 @@ dev.off()
 
 # -------- HLA-B --------
 # create hla matrix for HLA-B
-M_hla.b = Create.HLAMatrix(file = file_hla_typing, allele = "B", 
+allele = "B"
+M_hla.b = Create.HLAMatrix(file = file_hla_typing, allele = allele, 
                            rownames = "Barcode", tool = tool_typing)
 # Add metadata
-M_hla.b.complete = addMetadata(M_hla.b, metadata = metadata_Vo_HLA, clean_output = TRUE)
+M_hla.b.complete = addMetadata(M_hla.b, metadata = metadata_Vo_HLA_TCR, clean_output = TRUE)
 # save the results (ignore 6 warning, columns are then renamed in the function)
-RES_HLA = results_all(M_hla.complete = M_hla.b.complete, allele = "B", countFilter = 10)
+RES_HLA = results_all(M_hla.complete = M_hla.b.complete, allele = allele, countFilter = 10)
 
 # results dataframe all HLA-B
 hlab_all = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = T)]
@@ -818,6 +1157,26 @@ protection_B = signTable_B[apply(Est_p, 1, function(x) all(x)),"hla"]
 Est_s = Est > 0
 susceptibility_B = signTable_B[apply(Est_s, 1, function(x) all(x)),"hla"]
 protection_B; susceptibility_B
+
+# ---- TCR ------
+RES_TCR = results_TCR(M_hla = M_hla.b, metadata = metadata_Vo_HLA_TCR,
+                      allele = "B", countFilter = 10)
+# breadth 
+breadth = RES_TCR$tcr_expr[, grep(pattern = "breadth", x = colnames(RES_TCR$tcr_expr))]
+row.names(breadth) = RES_TCR$tcr_expr$hla
+breadth_sign = breadth[breadth$breadth_pvalue < 0.1,] 
+breadth_sign
+
+depth = RES_TCR$tcr_expr[, grep(pattern = "depth", x = colnames(RES_TCR$tcr_expr))]
+row.names(depth) = RES_TCR$tcr_expr$hla
+depth_sign = depth[depth$depth_pvalue < 0.1,] 
+depth_sign
+
+breadth$hla = row.names(breadth)
+depth$hla = row.names(depth)
+write.table(merge(breadth, depth, by = "hla"), 
+            file = paste(tabl, "lm_TCR_HLA_",allele,"_classI.tsv",sep = ''),
+            sep ='\t', quote = F, row.names = F)
 
 # ---- HLA-B plots -------
 # -------- pheatmap ----------
@@ -871,6 +1230,33 @@ pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
          treeheight_col = 15, 
          filename = paste(plt,"/HLAB_binomial_pvalue_heatmap.png", sep =''))
 dev.off()
+
+data = RES_TCR$tcr_expr[,grep("pvalue", colnames(RES_TCR$tcr_expr))]
+data = -log10(data)
+row.names(data) = RES_TCR$tcr_expr$hla
+colnames(data) = c("breadth", "depth")
+minH = 0; maxH=2
+myb = seq(minH, maxH, by = 0.01)
+crp <- colorRampPalette(c('dodgerblue4','white','darkred'))
+myc <- crp(length(myb))
+ann_data = RES_TCR$tcr_expr[,grep("Estimate", colnames(RES_TCR$tcr_expr))]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_TCR$tcr_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$breadth_Estimate))
+colnames(ann_data_2) = c("Br_Coeff","Dp_Coeff")
+ann_colors = list(
+  Br_Coeff = mycol,
+  Dp_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = F, treeheight_row = 0,
+         treeheight_col = 15)#, filename = paste(plt,"HLA", allele, "_TCR_pvalue_heatmap.png", sep =''))
+
+dev.off()
+
 # --- boxplot ggplot2 --------
 d = M_hla.b.complete[,c("HLA-B*51:01", "Abbot_semiquantitative", 
                         "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
@@ -919,8 +1305,62 @@ ggplot(data = dd, aes(x =`HLA-B*51:01`, y = value,
   theme(legend.title = element_blank(), legend.position = "right")
 ggsave(paste(plt,"/boxplot_residuals_HLA.B.51.01.png",sep=''), width = 8, height = 6.5)
 
-#RES_HLA$residuals_expr[RES_HLA$residuals_expr$hla == "HLA-B*35:02", 
-#                      grep(c("pvalue"), x = colnames(RES_HLA$residuals_expr))]
+
+d = M_hla.b.complete[,c("HLA-B*51:01", "breadth_classI", "depth_classI")]
+colnames(d) = c("HLA-B*51:01", "breadth", "depth")
+d$`HLA-B*51:01` = factor(d$`HLA-B*51:01`)
+dd = gather(d, key=TCR, value=value, -`HLA-B*51:01`)
+dd$TCR = factor(dd$TCR, levels = c("breadth", "depth"))
+ggplot(data = dd, aes(x =`HLA-B*51:01`, y = value, 
+                      color = TCR, fill = TCR)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-B*51:01") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#6666FF", "#CC6600")) +
+  scale_fill_manual(values=c("#6666FF", "#CC6600")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(TCR ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_TCR_mean_HLA.B.51.01.png", sep = ''), width = 4, height = 3)
+
+d = M_hla.b.complete[,c("HLA-B*35:02", "breadth_classI", "depth_classI")]
+colnames(d) = c("HLA-B*35:02", "breadth", "depth")
+d$`HLA-B*35:02` = factor(d$`HLA-B*35:02`)
+dd = gather(d, key=TCR, value=value, -`HLA-B*35:02`)
+dd$TCR = factor(dd$TCR, levels = c("breadth", "depth"))
+ggplot(data = dd, aes(x =`HLA-B*35:02`, y = value, 
+                      color = TCR, fill = TCR)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-B*35:02") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#6666FF", "#CC6600")) +
+  scale_fill_manual(values=c("#6666FF", "#CC6600")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(TCR ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_TCR_mean_HLA.B.35.02.png", sep = ''), width = 4, height = 3)
+
+d = M_hla.b.complete[,c("HLA-B*49:01", "breadth_classI", "depth_classI")]
+colnames(d) = c("HLA-B*49:01", "breadth", "depth")
+d$`HLA-B*49:01` = factor(d$`HLA-B*49:01`)
+dd = gather(d, key=TCR, value=value, -`HLA-B*49:01`)
+dd$TCR = factor(dd$TCR, levels = c("breadth", "depth"))
+ggplot(data = dd, aes(x =`HLA-B*49:01`, y = value, 
+                      color = TCR, fill = TCR)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-B*49:01") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#6666FF", "#CC6600")) +
+  scale_fill_manual(values=c("#6666FF", "#CC6600")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(TCR ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_TCR_mean_HLA.B.49.01.png", sep = ''), width = 4, height = 3)
+
+
 d = M_hla.b.complete[,c("HLA-B*35:02", "Abbot_semiquantitative", 
                         "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
 colnames(d) = c("HLA-B*35:02", "Abbot", "Roche", "Diasorin")
@@ -989,13 +1429,14 @@ mosaicplot(Groundtruth_GTA ~ `HLA-B*18:01`, data = d,
 dev.off()
 
 # -------- HLA-C -------- 
+allele = "C"
 # create Matrix 
-M_hla.c = Create.HLAMatrix(file = file_hla_typing, allele = "C", 
+M_hla.c = Create.HLAMatrix(file = file_hla_typing, allele = allele , 
                            rownames = "Barcode", tool = tool_typing)
 # add metadat
-M_hla.c.complete = addMetadata(M_hla.c, metadata = metadata_Vo_HLA, clean_output = TRUE)
+M_hla.c.complete = addMetadata(M_hla.c, metadata = metadata_Vo_HLA_TCR, clean_output = TRUE)
 # save the results (ignore 6 warning, columns are then renamed in the function)
-RES_HLA = results_all(M_hla.complete = M_hla.c.complete, allele = "C", countFilter = 10)
+RES_HLA = results_all(M_hla.complete = M_hla.c.complete, allele = allele , countFilter = 10)
 # results dataframe all HLA-C
 hlac_all = RES_HLA[grep(pattern = "expr", names(RES_HLA), invert = T)]
 RESULTS_C_all = Reduce(function(x, y) merge(x, y, by = "hla"), hlac_all)
@@ -1018,6 +1459,26 @@ protection_C = signTable_C[apply(Est_p, 1, function(x) all(x)),"hla"]
 Est_s = Est > 0
 susceptibility_C = signTable_C[apply(Est_s, 1, function(x) all(x)),"hla"]
 protection_C; susceptibility_C
+
+# --- TCR -----
+RES_TCR = results_TCR(M_hla = M_hla.c, metadata = metadata_Vo_HLA_TCR,
+                      allele = "C", countFilter = 10)
+# breadth 
+breadth = RES_TCR$tcr_expr[, grep(pattern = "breadth", x = colnames(RES_TCR$tcr_expr))]
+row.names(breadth) = RES_TCR$tcr_expr$hla
+breadth_sign = breadth[breadth$breadth_pvalue < 0.1,] 
+breadth_sign
+
+depth = RES_TCR$tcr_expr[, grep(pattern = "depth", x = colnames(RES_TCR$tcr_expr))]
+row.names(depth) = RES_TCR$tcr_expr$hla
+depth_sign = depth[depth$depth_pvalue < 0.1,] 
+depth_sign
+
+breadth$hla = row.names(breadth)
+depth$hla = row.names(depth)
+write.table(merge(breadth, depth, by = "hla"), 
+            file = paste(tabl, "lm_TCR_HLA_",allele,"_classI.tsv",sep = ''),
+            sep ='\t', quote = F, row.names = F)
 
 # ---- HLA-C plots ------
 # --- pheatmap -------
@@ -1073,6 +1534,32 @@ pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
          treeheight_col = 15, 
          filename = paste(plt,"HLAC_binomial_pvalue_heatmap.png", sep =''))
 
+data = RES_TCR$tcr_expr[,grep("pvalue", colnames(RES_TCR$tcr_expr))]
+data = -log10(data)
+row.names(data) = RES_TCR$tcr_expr$hla
+colnames(data) = c("breadth", "depth")
+minH = 0; maxH=2
+myb = seq(minH, maxH, by = 0.01)
+crp <- colorRampPalette(c('dodgerblue4','white','darkred'))
+myc <- crp(length(myb))
+ann_data = RES_TCR$tcr_expr[,grep("Estimate", colnames(RES_TCR$tcr_expr))]
+ann_data_2 = ann_data<0 
+ann_data_2[ann_data_2==TRUE] = "protection"; ann_data_2[ann_data_2==FALSE] = "susceptibility"
+ann_data_2 = as.data.frame(ann_data_2)
+row.names(ann_data_2) = RES_TCR$tcr_expr$hla
+mycol = c("#FFCC33","#000000"); names(mycol) = levels(as.factor(ann_data_2$breadth_Estimate))
+colnames(ann_data_2) = c("Br_Coeff","Dp_Coeff")
+ann_colors = list(
+  Br_Coeff = mycol,
+  Dp_Coeff = mycol)
+pheatmap(data, annotation_row = ann_data_2, annotation_colors = ann_colors,
+         annotation_legend = FALSE, legend = TRUE,
+         breaks = myb, color = myc, cellwidth = 30, cellheight = 12, 
+         cluster_rows = T, cluster_cols = F, treeheight_row = 0,
+         treeheight_col = 15)#, filename = paste(plt,"HLA", allele, "_TCR_pvalue_heatmap.png", sep =''))
+
+dev.off()
+
 # ----- boxplot ggplo2 --------
 d = M_hla.c.complete[,c("HLA-C*05:01", "Abbot_semiquantitative", 
                         "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
@@ -1104,6 +1591,42 @@ pdf(paste(plt,"/mosaicplot_GTA_HLA.C.05.01.pdf", sep =''), width = 6, height = 6
 mosaicplot(Groundtruth_GTA ~ `HLA-C*05:01`, data = d, 
            main = "HLA-C*05:01", shade = TRUE, xlab = "GTA")
 dev.off()
+
+d = M_hla.c.complete[,c("HLA-C*05:01", "breadth_classI", "depth_classI")]
+colnames(d) = c("HLA-C*05:01", "breadth", "depth")
+d$`HLA-C*05:01` = factor(d$`HLA-C*05:01`)
+dd = gather(d, key=TCR, value=value, -`HLA-C*05:01`)
+dd$TCR = factor(dd$TCR, levels = c("breadth", "depth"))
+ggplot(data = dd, aes(x =`HLA-C*05:01`, y = value, 
+                      color = TCR, fill = TCR)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-C*05:01") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#6666FF", "#CC6600")) +
+  scale_fill_manual(values=c("#6666FF", "#CC6600")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(TCR ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_TCR_mean_HLA.C.05.01.png", sep = ''), width = 4, height = 3)
+
+d = M_hla.c.complete[,c("HLA-C*03:04", "breadth_classI", "depth_classI")]
+colnames(d) = c("HLA-C*03:04", "breadth", "depth")
+d$`HLA-C*03:04` = factor(d$`HLA-C*03:04`)
+dd = gather(d, key=TCR, value=value, -`HLA-C*03:04`)
+dd$TCR = factor(dd$TCR, levels = c("breadth", "depth"))
+ggplot(data = dd, aes(x =`HLA-C*03:04`, y = value, 
+                      color = TCR, fill = TCR)) + 
+  geom_boxplot(alpha = 0.5, notch=FALSE) + 
+  xlab("allele counts") + 
+  ggtitle("HLA-C*03:04") +
+  stat_summary(fun=mean, geom="point", shape=23, size=3) +
+  scale_color_manual(values=c("#6666FF", "#CC6600")) +
+  scale_fill_manual(values=c("#6666FF", "#CC6600")) +
+  geom_jitter(shape=20, position=position_jitter(0.2)) +
+  facet_grid(TCR ~ ., scales = "free_y") + 
+  theme(legend.title = element_blank(), legend.position = "top")
+ggsave(paste(plt,"boxplot_TCR_mean_HLA.C.03.04.png", sep = ''), width = 4, height = 3)
 
 
 # -------- ***** Class II ******* --------

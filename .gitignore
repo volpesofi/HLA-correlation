@@ -5,3 +5,6 @@ plots_*/
 *.RData
 *.Rapp.history
 hla_statistics_bk.R
+.DS_Store
+._.DS_Store
+
