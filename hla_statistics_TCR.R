@@ -818,6 +818,8 @@ M_hla.a = Create.HLAMatrix(file = file_hla_typing, allele = allele,
                            rownames = "Barcode", tool = tool_typing)
 # Add metadata
 M_hla.a.complete = addMetadata(M_hla.a, metadata = metadata_Vo_HLA_TCR, clean_output = TRUE)
+write.csv(M_hla.a.complete, 
+          file = paste(tabl, "M_HLA_metadata"))
 # save the results (ignore 6 warning, columns are then renamed in the function)
 RES_HLA = results_all(M_hla.complete = M_hla.a.complete, allele = allele, countFilter = 10)
 
@@ -1628,6 +1630,19 @@ ggplot(data = dd, aes(x =`HLA-C*03:04`, y = value,
   theme(legend.title = element_blank(), legend.position = "top")
 ggsave(paste(plt,"boxplot_TCR_mean_HLA.C.03.04.png", sep = ''), width = 4, height = 3)
 
+
+# ------ save full data --------
+A = merge(M_hla.a.complete, M_hla.b.complete)
+DATA = merge(A, M_hla.c.complete)
+Barcode = row.names(M_hla.c.complete)
+DATA = cbind(Barcode, DATA)
+
+write.table(DATA, paste(tabl, 
+                        "DATA_",
+                        tool_typing,
+                        ".tsv", sep =''),
+            quote = F, row.names = FALSE,
+            sep = '\t')
 
 # -------- ***** Class II ******* --------
 # -------- HLA-DQA1 --------
