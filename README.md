@@ -18,3 +18,11 @@ The script outputs
 `results_hla_a_allmodels.tsv`, `results_hla_b_allmodels.tsv`, `results_hla_c_allmodels.tsv` contain the Estimate and canonical pvalue for all the corralations.
  * several plots (heapmaps of -Log10(canonical pvalue), boxplots and mosaic plots), in a folder `called plots_fished_tops`.
  * The .Rdata object 
+
+# Executable script
+I have also created an executable version of the script:
+```
+conda create --name R4.0 --file R4_requirements.txt
+conda activate R4.0
+Rscript --vanilla hla_statistics_TCR_executable.R --input input/hlavbseq_results.tsv --tool hlavbseq --class classI
+```
