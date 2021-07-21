@@ -1,3 +1,5 @@
+#!/usr/bin/env Rscript
+
 # ----- import library ---------
 suppressMessages(library(dplyr))
 suppressMessages(library(gplots))
@@ -11,20 +13,37 @@ suppressMessages(library(viridis))
 # ----- set WorkingDirectory and create outputs folders ---------
 setwd('/beegfs/scratch/ric.cosr/ric.cosr/Vo_WGS/hla_statistics/')
 
+
+library("optparse")
+
+
+option_list = list(
+  make_option(c("-i", "--input"), type="character", default=NULL, 
+              help="input file name", metavar="character"),
+  make_option(c("-t", "--tool"), type="character", default= "optitype", 
+              help="tool [default= %default]", metavar="character"),
+  make_option(c("-c", "--class"), type="character", default= "classI", 
+              help="HLA class [default= %default]", metavar="character")
+); 
+
+opt_parser = OptionParser(option_list=option_list);
+opt = parse_args(opt_parser);
+
+
+if (is.null(opt$input)){
+  print_help(opt_parser)
+  stop("input file needs to be supplied.n", call.=FALSE)
+}
+
+
+
 # ------ input file ------
-#class="classI"
-class="classII"
 
-#file_hla_typing = 'input/fished_all_tops.tsv'
-#file_hla_typing = 'input/optitype_results_classI.tsv'
-#file_hla_typing = 'input/hlavbseq_results.tsv'
-file_hla_typing = "input/class2_results.tsv"
 
-# --- create dir for outputs ----
-#tool_typing = "optitype"
-#tool_typing = "hlavbseq"
-#tool_typing = "bwakit"
-tool_typing = "classII"
+class = opt$class
+file_hla_typing = opt$input
+tool_typing = opt$tool
+
 tabl = paste("tables_", tool_typing, "/",  sep ='') 
 plt = paste("plots_", tool_typing, "/",sep ='') 
 
@@ -2316,218 +2335,8 @@ write.table(DATA, paste(tabl,
 
 } 
 
-# -------- Protection/Susceptibility table ---------
-# Summary
-protection_A; susceptibility_A
-protection_B; susceptibility_B
-protection_C; susceptibility_C
-
-M_hla.a.complete = addMetadata(M_hla.a, metadata = metadata_Vo_HLA, clean_output = TRUE)
-M_hla.b.complete = addMetadata(M_hla.b, metadata = metadata_Vo_HLA, clean_output = TRUE)
-
-# option 1
-PS_matrix = data.frame(Barcode = row.names(M_hla.a.complete), 
-                       HLAA_status = NA,
-                       HLAB_status = NA)
-
-
-allelestatusB = function(x) {
-  # x is a patient
-  p = sum(M_hla.b.complete[x,protection_B])
-  s = sum(M_hla.b.complete[x,susceptibility_B])
-  status = p-s
-  status
-  return(status)
-}
-allelestatusA = function(x) {
-  # x is a patient
-  p = sum(M_hla.a.complete[x,protection_A])
-  s = sum(M_hla.a.complete[x,susceptibility_A])
-  status = p-s
-  status
-  return(status)
-}
-
-PS_matrix$HLAA_status = sapply(PS_matrix$Barcode, function(x) allelestatusA(x))
-PS_matrix$HLAB_status = sapply(PS_matrix$Barcode, function(x) allelestatusB(x))
-PS_matrix$HLA_sum = (PS_matrix$HLAA_status + PS_matrix$HLAB_status)
-PS_matrix$HLA_mean = (PS_matrix$HLAA_status + PS_matrix$HLAB_status)/2
-
-write.xlsx(x = PS_matrix, file = paste(tabl,"/Protection_Susceptibility_Score_Table.xlsx", sep=''),
-           row.names = FALSE, asTable = TRUE)
-
-# -------- *** plots Protection/Susceptibility table ***  ---------
-M_hla.a.complete$Barcode = row.names(M_hla.a.complete)
-MPS = merge(M_hla.a.complete, PS_matrix, by.y = "Barcode")
-d = MPS[,c("HLA_sum", "Abbot_semiquantitative", 
-                        "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
-colnames(d) = c("HLA_status", "Abbot", "Roche", "Diasorin")
-d$HLA_status = factor(d$HLA_status)
-dd = gather(d, key=antibody, value=value, -HLA_status)
-dd$antibody = factor(dd$antibody, levels = c("Abbot", "Roche", "Diasorin"))
-ggplot(data = dd, aes(x=HLA_status, y = value, 
-                      color = antibody, fill = antibody)) + 
-  geom_boxplot(alpha = 0.5, notch=FALSE) + 
-  xlab("(HLA-A SPscore + HLA-B SPscore)/2") + 
-  ggtitle("Susceptibility Protection Score HLA-A + HLA-B") +
-  stat_summary(fun=mean, geom="point", shape=23, size=3) +
-  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
-  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
-  geom_jitter(shape=20, position=position_jitter(0.2)) +
-  facet_grid(antibody ~ ., scales = "free_y") + 
-  theme(legend.title = element_blank(), legend.position = "top")
-ggsave(paste(plt,"/boxplot_antibody_mean_HLA_AB_status.png", sep =''), width = 5, height = 3)
-
-
-d = MPS[,c("HLAA_status", "Abbot_semiquantitative", 
-           "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
-colnames(d) = c("HLA_status", "Abbot", "Roche", "Diasorin")
-d$HLA_status = factor(d$HLA_status)
-dd = gather(d, key=antibody, value=value, -HLA_status)
-dd$antibody = factor(dd$antibody, levels = c("Abbot", "Roche", "Diasorin"))
-ggplot(data = dd, aes(x=HLA_status, y = value, 
-                      color = antibody, fill = antibody)) + 
-  geom_boxplot(alpha = 0.5, notch=FALSE) + 
-  xlab("HLA-A SPscore") + 
-  ggtitle("Susceptibility Protection Score HLA-A") +
-  stat_summary(fun=mean, geom="point", shape=23, size=3) +
-  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
-  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
-  geom_jitter(shape=20, position=position_jitter(0.2)) +
-  facet_grid(antibody ~ ., scales = "free_y") + 
-  theme(legend.title = element_blank(), legend.position = "top")
-ggsave(paste(plt,"/boxplot_antibody_mean_HLA_A_status.png", sep =''), width = 8, height = 6)
-
-d = MPS[,c("HLAB_status", "Abbot_semiquantitative", 
-           "Roche_Total_ICO", "Diasorin_IgG_semiquantitative")]
-colnames(d) = c("HLA_status", "Abbot", "Roche", "Diasorin")
-d$HLA_status = factor(d$HLA_status)
-dd = gather(d, key=antibody, value=value, -HLA_status)
-dd$antibody = factor(dd$antibody, levels = c("Abbot", "Roche", "Diasorin"))
-ggplot(data = dd, aes(x=HLA_status, y = value, 
-                      color = antibody, fill = antibody)) + 
-  geom_boxplot(alpha = 0.5, notch=FALSE) + 
-  xlab("HLA-B SPscore") + 
-  ggtitle("Susceptibility Protection Score HLA-B") +
-  stat_summary(fun=mean, geom="point", shape=23, size=3) +
-  scale_color_manual(values=c("#999999", "#E69F00", "#FF3300")) +
-  scale_fill_manual(values=c("#999999", "#E69F00", "#FF3300")) +
-  geom_jitter(shape=20, position=position_jitter(0.2)) +
-  facet_grid(antibody ~ ., scales = "free_y") + 
-  theme(legend.title = element_blank(), legend.position = "top")
-ggsave(paste(plt,"/boxplot_antibody_mean_HLA_B_status.png", sep =''), width = 8, height = 6)
-
-d = MPS[,c("HLA_sum", "swabs", 
-           "Groundtruth_GTA", "Groundtruth_direct_contacts_GTB")]
-colnames(d) = c("HLA_status", "swabs", "GTA", "GTB")
-d$HLA_status = factor(d$HLA_status)
-dd = gather(d, key=VAR, value=value, -HLA_status)
-dd$VAR = factor(dd$VAR, levels = c("swabs", "GTA", "GTB"))
-ggplot(data = dd, aes(x=HLA_status, y = value, 
-                      color = VAR, fill = VAR)) + 
-  geom_violin(alpha = 0.5) + 
-  xlab("(HLA-A SPscore + HLA-B SPscore)/2") + 
-  ggtitle("Susceptibility Protection Score") +
-  stat_summary(fun=mean, geom="point", shape=23, size=3) +
-  scale_color_manual(values=c("purple","blue", "orange")) +
-  scale_fill_manual(values=c("purple", "blue", "orange")) +
-  #geom_jitter(shape=20, position=position_jitter(0.2)) +
-  facet_grid(VAR ~ ., scales = "free_y") + 
-  theme(legend.title = element_blank(), legend.position = "top")
-ggsave(paste(plt,"/violinplot_GT_mean_HLA_AB_status.png", sep =''), width = 8, height = 6)
-
-
-mosaicplot(GTA ~ HLA_status, data = d, 
-           main = "HLA_status", shade = TRUE, xlab = "GTA")
-
-pdf(paste(plt,"/mosaicplot_GTA_HLAsum.pdf", sep =''), width = 6, height = 6)
-mosaicplot(GTA ~ HLA_status, data = d, 
-           main = "HLA_status", shade = TRUE, xlab = "GTA")
-dev.off()
-
-
-d = MPS[,c("HLAA_status", "swabs", 
-           "Groundtruth_GTA", "Groundtruth_direct_contacts_GTB")]
-colnames(d) = c("HLA_status", "swabs", "GTA", "GTB")
-d$HLA_status = factor(d$HLA_status)
-dd = gather(d, key=VAR, value=value, -HLA_status)
-dd$VAR = factor(dd$VAR, levels = c("swabs", "GTA", "GTB"))
-ggplot(data = dd, aes(x=HLA_status, y = value, 
-                      color = VAR, fill = VAR)) + 
-  geom_violin(alpha = 0.5) + 
-  xlab("HLA-A SPscore") + 
-  ggtitle("Susceptibility Protection Score HLA-A") +
-  stat_summary(fun=mean, geom="point", shape=23, size=3) +
-  scale_color_manual(values=c("purple","blue", "orange")) +
-  scale_fill_manual(values=c("purple", "blue", "orange")) +
-  #geom_jitter(shape=20, position=position_jitter(0.2)) +
-  facet_grid(VAR ~ ., scales = "free_y") + 
-  theme(legend.title = element_blank(), legend.position = "top")
-ggsave(paste(plt,"/violinplot_GT_mean_HLA_A_status.png", sep =''), width = 8, height = 6)
-mosaicplot(GTA ~ HLA_status, data = d, 
-           main = "HLA_status", shade = TRUE, xlab = "GTA")
-
-d = MPS[,c("HLAB_status", "swabs", 
-           "Groundtruth_GTA", "Groundtruth_direct_contacts_GTB")]
-colnames(d) = c("HLA_status", "swabs", "GTA", "GTB")
-d$HLA_status = factor(d$HLA_status)
-dd = gather(d, key=VAR, value=value, -HLA_status)
-dd$VAR = factor(dd$VAR, levels = c("swabs", "GTA", "GTB"))
-ggplot(data = dd, aes(x=HLA_status, y = value, 
-                      color = VAR, fill = VAR)) + 
-  geom_violin(alpha = 0.5) + 
-  xlab("HLA-B SPscore") + 
-  ggtitle("Susceptibility Protection Score HLA-B") +
-  stat_summary(fun=mean, geom="point", shape=23, size=3) +
-  scale_color_manual(values=c("purple","blue", "orange")) +
-  scale_fill_manual(values=c("purple", "blue", "orange")) +
-  #geom_jitter(shape=20, position=position_jitter(0.2)) +
-  facet_grid(VAR ~ ., scales = "free_y") + 
-  theme(legend.title = element_blank(), legend.position = "top")
-ggsave(paste(plt,"/violinplot_GT_mean_HLA_B_status.png", sep =''), width = 8, height = 6)
-mosaicplot(GTA ~ HLA_status, data = d, 
-           main = "HLA_status", shade = TRUE, xlab = "GTA")
-
-
-
-# ----- Fisher Test and Chisquare Test --------
-#' function to perform chi2 e Fisher test on contingency matrix
-#' - M_hla.complete is the matrix produced by CreateMatrix with metadata
-#' - var is the variable to use for the phenotype (must be a column of M_hla.complete)
-#' - countFilter is the number of min HLA counts use to filter data before FDR evalutation
-hlaTests = function(M_hla.complete, var, countFilter = 10) {
-  hla = colnames(M_hla.complete)[grepl(colnames(M_hla.complete),pattern = "^HLA")]
-  hla_statistics_df = data.frame()
-  for (hla_i in hla) {
-  	# create contingency matrix
-    homo = table(M_hla.complete[M_hla.complete[,hla_i]==2,var])
-    etero = table(M_hla.complete[M_hla.complete[,hla_i]==1,var])
-    null = table(M_hla.complete[M_hla.complete[,hla_i]==0,var])
-    CM = as.matrix(rbind(homo, etero, null))
-    # perform tests
-    chisq <- chisq.test(CM)
-    fisher <- fisher.test(CM)
-    hla_statistics_df_entry = data.frame(hla = hla_i,
-                                         pvalue.chisq = chisq$p.value, 
-                                         pvalue.fisher = fisher$p.value)
-    hla_statistics_df = rbind(hla_statistics_df, hla_statistics_df_entry)
-  }
-  filter = colSums(M_hla.complete[,grepl(x = colnames(M_hla.complete), 
-                                         pattern = "^HLA")]) > countFilter
-  HLAexp = colnames(M_hla.complete)[grepl("^HLA", colnames(M_hla.complete))][filter]
-  hla_statistics_df_exp = hla_statistics_df[hla_statistics_df$hla %in% HLAexp,]
-  hla_statistics_df_exp$FDR.chisq = p.adjust(hla_statistics_df_exp$pvalue.chisq, method = "BH")
-  hla_statistics_df_exp$FDR.fisher = p.adjust(hla_statistics_df_exp$pvalue.fisher, method = "BH")
-  return(hla_statistics_df_exp)
-}
-
-hlaTests(M_hla.a.complete, var = "Groundtruth_GTA")
-hlaTests(M_hla.b.complete, var = "Groundtruth_GTA")
-hlaTests(M_hla.c.complete, var = "Groundtruth_GTA")
-
 
 # -------- save image ----------
 save.image(file = "hla.RData")
-
 sessionInfo()
 
